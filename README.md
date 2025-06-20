@@ -3,7 +3,7 @@ GPSCAM 0.1 - BY ADDICT
 ----------------------
 GPS enabled camera for Raspberry PI
 
-Still in early development.
+Still in early development, expect bugs
 Goal: 
 - Get a live camera feed with GPS information overlayed. 
 - Use the GPS data in Home-assistant via MQTT
