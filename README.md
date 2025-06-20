@@ -8,6 +8,10 @@ Goal:
 - Get a live camera feed with GPS information overlayed. 
 - Use the GPS data in Home-assistant via MQTT
 
+# What you need
+- A pi camera (tested with a OV5647)
+- A gps module (teste with NEO-8M)
+
 # Easy install on raspberry PI
 curl -fsSL https://raw.githubusercontent.com/4ddict/gpscam/main/install_gpscam.sh -o install_gpscam.sh && chmod +x install_gpscam.sh && ./install_gpscam.sh
 
