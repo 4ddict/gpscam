@@ -1,38 +1,39 @@
-----------------------
-GPSCAM 0.1 - BY ADDICT
-----------------------
-GPS enabled camera for Raspberry PI
+# 📸 GPSCam 0.1 by @addict
 
-Still in early development, expect bugs
+**GPS-enabled camera system for Raspberry Pi**  
+Overlay GPS coordinates, speed, and timestamp on a live camera stream — and publish GPS data to Home Assistant via MQTT.
 
-Goal: 
-- Get a live camera feed with GPS information overlayed. 
-- Use the GPS data in Home-assistant via MQTT
+> 🚧 **Still in early development — expect bugs. Contributions welcome!**
 
-# What you need
-- A pi camera (tested with a OV5647)
-- A gps module (tested with NEO-8M)
+---
 
-# Easy install on raspberry PI
-````
+## 🎯 Project Goals
+
+- Live MJPEG video feed (1920x1080 @ 15fps)
+- Overlay:
+  - 🕒 Time & Date
+  - 📍 GPS Coordinates
+  - 🚗 Speed in km/h
+- Web-based UI to change settings (resolution, FPS, overlay size, timezone)
+- MQTT integration for Home Assistant auto-discovery
+- Optional Scrypted RTSP support (via Rebroadcast plugin)
+
+---
+
+## 📦 What You’ll Need
+
+| Component        | Model Tested          |
+|------------------|-----------------------|
+| Raspberry Pi     | Zero 2 W              |
+| Camera Module    | OV5647                |
+| GPS Module       | NEO-8M (w/ antenna)   |
+
+Raspberry Pi OS Lite (Bookworm)  
+Kernel version: 6.12, Release: May 13, 2025
+
+---
+
+## 🚀 Easy Install (1-liner)
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/4ddict/gpscam/main/install_gpscam.sh -o install_gpscam.sh && chmod +x install_gpscam.sh && ./install_gpscam.sh
-````
-
-# Manual install
-1. Copy install_gpscam.sh
-2. sudo chmod +x install_gpscam.sh
-3. bash /install_gpscam.sh
-4. Choose username (usually pi)
-5. Wait
-
-  
-Webpage: http://YOURIP:8080
-
-# Fresh install
-./gpscam.sh
-# Clean reinstall
-./gpscam.sh --reinstall
-# Full uninstall
-./gpscam.sh --uninstall
-
-Tested on Pi ZeroW 2 with Raspbian Lite 6.12 (bookworm)
