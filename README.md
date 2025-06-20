@@ -12,7 +12,6 @@ GPSCAM 0.1 - BY ADDICT
 
   
 Webpage: YOURIP:8080
-RTSP: rtsp://YOURIP:8554/gpscam
 
 chmod +x gpscam.sh
 
