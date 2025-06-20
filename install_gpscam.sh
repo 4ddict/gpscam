@@ -34,7 +34,7 @@ fi
 
 echo "[+] Installing packages..."
 sudo apt update && sudo apt install -y \
-  python3-full python3-venv python3-pip \
+  python3 python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
   gpsd gpsd-clients libcap-dev mosquitto mosquitto-clients
 
