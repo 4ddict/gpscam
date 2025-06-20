@@ -9,9 +9,20 @@ GPSCAM 0.1 - BY ADDICT
 3. bash /install_gpscam.sh
 4. Choose username (usually pi)
 5. Wait
-6. access over YOURIP:777
 
-REINSTALL:
-./install_gpscam.sh --reinstall
+  
+Webpage: YOURIP:8080
+RTSP: rtsp://YOURIP:8554/gpscam
+
+chmod +x gpscam.sh
+
+# Fresh install
+./gpscam.sh
+
+# Clean reinstall
+./gpscam.sh --reinstall
+
+# Full uninstall
+./gpscam.sh --uninstall
 
 Tested on Pi ZeroW 2 with Raspbian Lite 6.12 (bookworm)
