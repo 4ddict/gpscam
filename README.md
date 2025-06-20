@@ -14,7 +14,9 @@ Goal:
 - A gps module (tested with NEO-8M)
 
 # Easy install on raspberry PI
+````
 curl -fsSL https://raw.githubusercontent.com/4ddict/gpscam/main/install_gpscam.sh -o install_gpscam.sh && chmod +x install_gpscam.sh && ./install_gpscam.sh
+````
 
 # Manual install
 1. Copy install_gpscam.sh
