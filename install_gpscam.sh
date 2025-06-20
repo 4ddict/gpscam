@@ -11,7 +11,7 @@ echo "[+] Updating system..."
 sudo apt update && sudo apt upgrade -y
 
 echo "[+] Installing dependencies..."
-sudo apt install -y libcamera-apps python3-flask python3-picamera2 gpsd gpsd-clients \
+sudo apt install -y libcamera-apps libcap-dev python3-flask python3-picamera2 gpsd gpsd-clients \
  python3-pip v4l2loopback-dkms ffmpeg mosquitto mosquitto-clients
 pip3 install flask picamera2 gpsd-py3 pynmea2 paho-mqtt
 
