@@ -42,6 +42,12 @@ sudo apt update && sudo apt install -y \
   python3-libcamera python3-picamera2 libcamera-apps \
   gpsd gpsd-clients libcap-dev mosquitto mosquitto-clients
 
+# === Configure Serial Port for GPS ===
+echo "[+] Configuring UART for GPS module..."
+sudo sed -i 's/console=serial0,115200 //g' /boot/cmdline.txt
+sudo sed -i '/^enable_uart=/d' /boot/config.txt
+echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
+
 # === GPSD ===
 echo "[+] Configuring GPSD..."
 sudo bash -c 'cat > /etc/default/gpsd <<EOF
@@ -277,7 +283,7 @@ sudo systemctl restart $SERVICE_NAME
 
 # === Final output ===
 echo "===================================="
-echo " ✅ GPSCam Installed and Running"
+echo " ✅ GPSCam Installed and Running, do not forget to reboot!"
 echo " 🌐 Web UI: http://$(hostname -I | awk '{print $1}'):8080"
 echo " 🏠 MQTT: Home Assistant Auto-Discovery enabled"
 echo " 🧹 Uninstall: ./install_gpscam.sh --uninstall"
