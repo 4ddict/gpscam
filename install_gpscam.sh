@@ -6,6 +6,7 @@ SERVICE_NAME=gpscam
 if [ -z "$USERNAME" ]; then
   read -p "Enter your Linux username (e.g., pi): " USERNAME
 fi
+read -p "Do you want to install local MQTT support? (y/n): " INSTALL_MQTT
 PROJECT_DIR="/home/$USERNAME/gpscam"
 VENV_DIR="$PROJECT_DIR/venv"
 
@@ -40,7 +41,11 @@ echo "[+] Installing dependencies..."
 sudo apt update && sudo apt install -y \
   python3 python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
-  gpsd gpsd-clients libcap-dev mosquitto mosquitto-clients
+  gpsd gpsd-clients
+
+if [[ "$INSTALL_MQTT" == "y" || "$INSTALL_MQTT" == "Y" ]]; then
+  sudo apt install -y mosquitto mosquitto-clients
+fi
 
 # === Configure Serial Port for GPS ===
 echo "[+] Configuring UART for GPS module..."
@@ -77,7 +82,7 @@ pip install \
   gpsd-py3==0.3.0 \
   pynmea2==1.18.0 \
   paho-mqtt==1.6.1 \
-  opencv-python==4.9.0.80
+  opencv-python-headless==4.9.0.80
 
 # === Files ===
 cat > settings.json << 'EOF'
