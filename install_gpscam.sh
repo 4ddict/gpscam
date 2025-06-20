@@ -1,9 +1,7 @@
 #!/bin/bash
 set -e
 
-# === Variables ===
 SERVICE_NAME=gpscam
-RTSP_SERVICE_NAME=gpscam-rtsp
 read -p "Enter your Linux username (e.g., pi): " USERNAME
 PROJECT_DIR="/home/$USERNAME/gpscam"
 VENV_DIR="$PROJECT_DIR/venv"
@@ -11,9 +9,9 @@ VENV_DIR="$PROJECT_DIR/venv"
 # === Uninstall ===
 if [[ "$1" == "--uninstall" ]]; then
   echo "[🔻] Uninstalling GPSCam..."
-  sudo systemctl stop $SERVICE_NAME.service $RTSP_SERVICE_NAME.service || true
-  sudo systemctl disable $SERVICE_NAME.service $RTSP_SERVICE_NAME.service || true
-  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service /etc/systemd/system/$RTSP_SERVICE_NAME.service
+  sudo systemctl stop $SERVICE_NAME.service || true
+  sudo systemctl disable $SERVICE_NAME.service || true
+  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
   sudo systemctl daemon-reload
   sudo systemctl reset-failed
   rm -rf "$PROJECT_DIR"
@@ -24,9 +22,9 @@ fi
 # === Reinstall ===
 if [[ "$1" == "--reinstall" ]]; then
   echo "[♻️] Reinstalling GPSCam..."
-  sudo systemctl stop $SERVICE_NAME.service $RTSP_SERVICE_NAME.service || true
-  sudo systemctl disable $SERVICE_NAME.service $RTSP_SERVICE_NAME.service || true
-  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service /etc/systemd/system/$RTSP_SERVICE_NAME.service
+  sudo systemctl stop $SERVICE_NAME.service || true
+  sudo systemctl disable $SERVICE_NAME.service || true
+  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
   sudo systemctl daemon-reload
   sudo systemctl reset-failed
   rm -rf "$PROJECT_DIR"
@@ -34,14 +32,12 @@ if [[ "$1" == "--reinstall" ]]; then
   sleep 2
 fi
 
-# === Install Dependencies ===
 echo "[+] Installing packages..."
 sudo apt update && sudo apt install -y \
   python3-full python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
-  gpsd gpsd-clients libcap-dev ffmpeg mosquitto mosquitto-clients
+  gpsd gpsd-clients libcap-dev mosquitto mosquitto-clients
 
-# === Fix GPSD Config ===
 echo "[+] Configuring GPSD..."
 sudo bash -c 'cat > /etc/default/gpsd <<EOF
 START_DAEMON="true"
@@ -56,19 +52,17 @@ sudo systemctl enable gpsd.socket
 sudo systemctl start gpsd.socket
 sudo systemctl start gpsd
 
-# === Create Project Structure ===
 echo "[+] Setting up GPSCam in $PROJECT_DIR..."
 mkdir -p "$PROJECT_DIR"/{static,templates}
 cd "$PROJECT_DIR"
 
-# === Create Virtual Environment ===
 echo "[+] Creating virtual environment..."
 python3 -m venv --system-site-packages venv
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 pip install flask picamera2 gpsd-py3 pynmea2 paho-mqtt opencv-python
 
-# === Write settings.json ===
+# === settings.json ===
 cat > settings.json << 'EOF'
 {
   "resolution": "1920x1080",
@@ -78,7 +72,7 @@ cat > settings.json << 'EOF'
 }
 EOF
 
-# === Write Python Files ===
+# === app.py ===
 cat > app.py << 'EOF'
 from flask import Flask, render_template, Response, request, redirect
 from camera import Camera
@@ -115,6 +109,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
+# === camera.py ===
 cat > camera.py << 'EOF'
 from picamera2 import Picamera2
 import json, cv2
@@ -147,6 +142,7 @@ class Camera:
             yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
 EOF
 
+# === gps.py ===
 cat > gps.py << 'EOF'
 import threading
 import gpsd
@@ -194,7 +190,7 @@ class GPSReader(threading.Thread):
             time.sleep(1)
 EOF
 
-# === HTML Templates ===
+# === Templates ===
 cat > templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -241,7 +237,7 @@ cat > templates/settings.html << 'EOF'
 </html>
 EOF
 
-# === Systemd Services ===
+# === Systemd Service ===
 cat > $SERVICE_NAME.service << EOF
 [Unit]
 Description=GPSCam Web UI
@@ -260,32 +256,14 @@ WantedBy=multi-user.target
 EOF
 
 sudo cp $SERVICE_NAME.service /etc/systemd/system/
-
-cat > $RTSP_SERVICE_NAME.service << EOF
-[Unit]
-Description=GPSCam RTSP Output
-After=multi-user.target
-
-[Service]
-ExecStart=/usr/bin/ffmpeg -f v4l2 -i /dev/video0 -vcodec libx264 -f rtsp rtsp://0.0.0.0:8554/gpscam
-Restart=always
-User=$USERNAME
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo cp $RTSP_SERVICE_NAME.service /etc/systemd/system/
-
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
-sudo systemctl enable $SERVICE_NAME $RTSP_SERVICE_NAME
-sudo systemctl restart $SERVICE_NAME $RTSP_SERVICE_NAME
+sudo systemctl enable $SERVICE_NAME
+sudo systemctl restart $SERVICE_NAME
 
 echo "===================================="
 echo " ✅ GPSCam Installed and Running"
 echo " 🌐 Web UI: http://<your-pi-ip>:8080"
-echo " 🎥 RTSP Stream: rtsp://<your-pi-ip>:8554/gpscam"
 echo " 🏠 MQTT: Home Assistant Auto-Discovery enabled"
 echo " 🧹 Uninstall: ./gpscam.sh --uninstall"
 echo " ♻️ Reinstall: ./gpscam.sh --reinstall"
