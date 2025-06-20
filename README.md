@@ -23,7 +23,7 @@ Overlay GPS coordinates, speed, and timestamp on a live camera stream — and pu
 
 | Component        | Model Tested          |
 |------------------|-----------------------|
-| Raspberry Pi     | Zero 2 W              |
+| Raspberry Pi     | Zero 2 W  / 3B+       |
 | Camera Module    | OV5647                |
 | GPS Module       | NEO-8M (w/ antenna)   |
 
@@ -91,7 +91,7 @@ Auto-discovery enabled for Home Assistant MQTT sensors.
 
 ## ✅ Status
 
-- ✅ Tested on Raspberry Pi Zero W 2
+- ✅ Tested on Raspberry Pi Zero W 2 / 3B+
 - ✅ Fresh Raspbian Lite (Bookworm)
 - ✅ Works with Scrypted (via Rebroadcast plugin)
 
