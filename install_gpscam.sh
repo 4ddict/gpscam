@@ -1,8 +1,11 @@
 #!/bin/bash
 set -e
 
+# === CONFIG ===
 SERVICE_NAME=gpscam
-read -p "Enter your Linux username (e.g., pi): " USERNAME
+if [ -z "$USERNAME" ]; then
+  read -p "Enter your Linux username (e.g., pi): " USERNAME
+fi
 PROJECT_DIR="/home/$USERNAME/gpscam"
 VENV_DIR="$PROJECT_DIR/venv"
 
@@ -32,12 +35,14 @@ if [[ "$1" == "--reinstall" ]]; then
   sleep 2
 fi
 
-echo "[+] Installing packages..."
+# === Installation ===
+echo "[+] Installing dependencies..."
 sudo apt update && sudo apt install -y \
   python3 python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
   gpsd gpsd-clients libcap-dev mosquitto mosquitto-clients
 
+# === GPSD ===
 echo "[+] Configuring GPSD..."
 sudo bash -c 'cat > /etc/default/gpsd <<EOF
 START_DAEMON="true"
@@ -52,17 +57,23 @@ sudo systemctl enable gpsd.socket
 sudo systemctl start gpsd.socket
 sudo systemctl start gpsd
 
-echo "[+] Setting up GPSCam in $PROJECT_DIR..."
+# === Project Setup ===
+echo "[+] Setting up GPSCam..."
 mkdir -p "$PROJECT_DIR"/{static,templates}
 cd "$PROJECT_DIR"
 
-echo "[+] Creating virtual environment..."
 python3 -m venv --system-site-packages venv
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
-pip install flask picamera2 gpsd-py3 pynmea2 paho-mqtt opencv-python
+pip install \
+  flask==3.0.3 \
+  picamera2==0.3.16 \
+  gpsd-py3==0.3.0 \
+  pynmea2==1.18.0 \
+  paho-mqtt==1.6.1 \
+  opencv-python==4.9.0.80
 
-# === settings.json ===
+# === Files ===
 cat > settings.json << 'EOF'
 {
   "resolution": "1920x1080",
@@ -72,8 +83,9 @@ cat > settings.json << 'EOF'
 }
 EOF
 
-# === app.py ===
 cat > app.py << 'EOF'
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 from flask import Flask, render_template, Response, request, redirect
 from camera import Camera
 from gps import GPSReader
@@ -109,8 +121,9 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
-# === camera.py ===
 cat > camera.py << 'EOF'
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 from picamera2 import Picamera2
 import json, cv2
 from datetime import datetime
@@ -142,8 +155,9 @@ class Camera:
             yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
 EOF
 
-# === gps.py ===
 cat > gps.py << 'EOF'
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import threading
 import gpsd
 import time
@@ -261,10 +275,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable $SERVICE_NAME
 sudo systemctl restart $SERVICE_NAME
 
+# === Final output ===
 echo "===================================="
 echo " ✅ GPSCam Installed and Running"
-echo " 🌐 Web UI: http://<your-pi-ip>:8080"
+echo " 🌐 Web UI: http://$(hostname -I | awk '{print $1}'):8080"
 echo " 🏠 MQTT: Home Assistant Auto-Discovery enabled"
-echo " 🧹 Uninstall: ./gpscam.sh --uninstall"
-echo " ♻️ Reinstall: ./gpscam.sh --reinstall"
+echo " 🧹 Uninstall: ./install_gpscam.sh --uninstall"
+echo " ♻️ Reinstall: ./install_gpscam.sh --reinstall"
 echo "===================================="
