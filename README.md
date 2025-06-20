@@ -9,14 +9,13 @@ Overlay GPS coordinates, speed, and timestamp on a live camera stream — and pu
 
 ## 🎯 Project Goals
 
-- Live MJPEG video feed (1920x1080 @ 15fps)
+- Live MJPEG video feed with overlay
 - Overlay:
   - 🕒 Time & Date
   - 📍 GPS Coordinates
   - 🚗 Speed in km/h
 - Web-based UI to change settings (resolution, FPS, overlay size, timezone)
 - MQTT integration for Home Assistant auto-discovery
-- Optional Scrypted RTSP support (via Rebroadcast plugin)
 
 ---
 
