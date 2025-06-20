@@ -13,14 +13,10 @@ GPSCAM 0.1 - BY ADDICT
   
 Webpage: YOURIP:8080
 
-chmod +x gpscam.sh
-
 # Fresh install
 ./gpscam.sh
-
 # Clean reinstall
 ./gpscam.sh --reinstall
-
 # Full uninstall
 ./gpscam.sh --uninstall
 
