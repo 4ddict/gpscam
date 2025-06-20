@@ -11,4 +11,7 @@ GPSCAM 0.1 - BY ADDICT
 5. Wait
 6. access over YOURIP:777
 
+REINSTALL:
+./install_gpscam.sh --reinstall
+
 Tested on Pi ZeroW 2 with Raspbian Lite 6.12 (bookworm)
