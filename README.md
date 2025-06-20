@@ -11,7 +11,7 @@ GPSCAM 0.1 - BY ADDICT
 5. Wait
 
   
-Webpage: YOURIP:8080
+Webpage: http://YOURIP:8080
 
 # Fresh install
 ./gpscam.sh
