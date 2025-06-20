@@ -38,13 +38,13 @@ fi
 
 # === Installation ===
 echo "[+] Installing dependencies..."
-sudo apt update && sudo apt install -y \
+sudo apt update && sudo apt install --no-install-recommends -y \
   python3 python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
   gpsd gpsd-clients
 
 if [[ "$INSTALL_MQTT" == "y" || "$INSTALL_MQTT" == "Y" ]]; then
-  sudo apt install -y mosquitto mosquitto-clients
+  sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
 fi
 
 # === Configure Serial Port for GPS ===
