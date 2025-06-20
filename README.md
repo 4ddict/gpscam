@@ -11,7 +11,7 @@ Goal:
 
 # What you need
 - A pi camera (tested with a OV5647)
-- A gps module (teste with NEO-8M)
+- A gps module (tested with NEO-8M)
 
 # Easy install on raspberry PI
 curl -fsSL https://raw.githubusercontent.com/4ddict/gpscam/main/install_gpscam.sh -o install_gpscam.sh && chmod +x install_gpscam.sh && ./install_gpscam.sh
