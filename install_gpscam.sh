@@ -14,35 +14,17 @@ read -p "Install GPS support? (y/n): " INSTALL_GPS
 PROJECT_DIR="/home/$USERNAME/gpscam"
 VENV_DIR="$PROJECT_DIR/venv"
 
-# === FUNCTIONS ===
-clean_installation() {
-  echo "[🧹] Cleaning up previous installation..."
-  sudo systemctl stop $SERVICE_NAME.service || true
-  sudo systemctl disable $SERVICE_NAME.service || true
-  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
-  sudo systemctl daemon-reload
-  sudo systemctl reset-failed
-  rm -rf "$PROJECT_DIR"
-  echo "[✅] Previous installation removed."
-}
+# === CLEAN BROKEN CAMERA STUFF FIRST ===
+echo "[🧹] Cleaning conflicting libcamera packages..."
+sudo apt purge -y libcamera* rpicam-apps* python3-picamera2* || true
+sudo apt autoremove -y
 
-# === Uninstall ===
-if [[ "$1" == "--uninstall" ]]; then
-  clean_installation
-  exit 0
-fi
-
-# === Reinstall ===
-if [[ "$1" == "--reinstall" ]]; then
-  clean_installation
-fi
-
-# === APT Dependencies (minimal, no OpenCV) ===
-echo "[+] Installing minimal system packages..."
+# === CORE APT PACKAGES ===
+echo "[+] Installing system packages..."
 sudo apt update
 sudo apt install --no-install-recommends -y \
   python3 python3-venv python3-pip \
-  libcamera0 libcamera-dev libjpeg-dev
+  libjpeg-dev libcamera-dev python3-libcamera
 
 if [[ "$INSTALL_GPS" =~ ^[Yy]$ ]]; then
   sudo apt install --no-install-recommends -y gpsd gpsd-clients
@@ -69,7 +51,8 @@ if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
   sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
 fi
 
-# === Project Setup ===
+# === PROJECT SETUP ===
+echo "[+] Setting up project in $PROJECT_DIR"
 mkdir -p "$PROJECT_DIR"/{static,templates}
 cd "$PROJECT_DIR"
 
@@ -84,7 +67,7 @@ pip install \
   paho-mqtt==1.6.1 \
   Pillow==10.3.0
 
-# === Runtime Config ===
+# === CONFIG FILES ===
 cat > settings.json << 'EOF'
 {
   "resolution": "1920x1080",
@@ -101,7 +84,8 @@ cat > config.json << EOF
 }
 EOF
 
-# === Python Files ===
+# === PYTHON CODE ===
+
 cat > app.py << 'EOF'
 #!/usr/bin/env python3
 from flask import Flask, render_template, Response, request, redirect
@@ -257,7 +241,7 @@ class GPSReader(threading.Thread):
             time.sleep(1)
 EOF
 
-# === Templates ===
+# === HTML Templates ===
 cat > templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -304,7 +288,7 @@ cat > templates/settings.html << 'EOF'
 </html>
 EOF
 
-# === Systemd Service ===
+# === SYSTEMD SERVICE ===
 cat > $SERVICE_NAME.service << EOF
 [Unit]
 Description=GPSCam Web UI
