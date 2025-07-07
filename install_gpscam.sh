@@ -3,71 +3,88 @@ set -e
 
 # === CONFIG ===
 SERVICE_NAME=gpscam
-
 if [ -z "$USERNAME" ]; then
   read -p "Enter your Linux username (e.g., pi): " USERNAME
 fi
-
-read -p "Install local MQTT support? (y/n): " INSTALL_MQTT
-read -p "Install GPS support? (y/n): " INSTALL_GPS
-
+read -p "Do you want to install local MQTT support? (y/n): " INSTALL_MQTT
 PROJECT_DIR="/home/$USERNAME/gpscam"
 VENV_DIR="$PROJECT_DIR/venv"
+# ===
 
-# === CLEAN BROKEN CAMERA STUFF FIRST ===
-echo "[🧹] Cleaning conflicting libcamera packages..."
-sudo apt purge -y libcamera* rpicam-apps* python3-picamera2* || true
-sudo apt autoremove -y
+# === Uninstall ===
+if [[ "$1" == "--uninstall" ]]; then
+  echo "[🔻] Uninstalling GPSCam..."
+  sudo systemctl stop $SERVICE_NAME.service || true
+  sudo systemctl disable $SERVICE_NAME.service || true
+  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
+  sudo systemctl daemon-reload
+  sudo systemctl reset-failed
+  rm -rf "$PROJECT_DIR"
+  echo "[✅] GPSCam removed."
+  exit 0
+fi
 
-# === CORE APT PACKAGES ===
-echo "[+] Installing system packages..."
-sudo apt update
-sudo apt install --no-install-recommends -y \
-  python3 python3-venv python3-pip \
-  libjpeg-dev libcamera-dev python3-libcamera
+# === Reinstall (wipe + fresh install) ===
+if [[ "$1" == "--reinstall" ]]; then
+  echo "[♻️] Reinstalling GPSCam..."
+  sudo systemctl stop $SERVICE_NAME.service || true
+  sudo systemctl disable $SERVICE_NAME.service || true
+  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
+  sudo systemctl daemon-reload
+  sudo systemctl reset-failed
+  rm -rf "$PROJECT_DIR"
+  echo "[✅] Cleaned old installation."
+  sleep 2
+fi
 
-if [[ "$INSTALL_GPS" =~ ^[Yy]$ ]]; then
-  sudo apt install --no-install-recommends -y gpsd gpsd-clients
+# === APT dependencies ===
+echo "[+] Installing minimal APT dependencies..."
+sudo apt update && sudo apt install --no-install-recommends -y \
+  python3 python3-venv python3-pip libjpeg-dev gpsd gpsd-clients python3-libcamera
 
-  echo "[+] Configuring UART for GPS..."
-  sudo sed -i 's/console=serial0,115200 //g' /boot/cmdline.txt
-  sudo sed -i '/^enable_uart=/d' /boot/config.txt
-  echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
+if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
+  sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
+fi
 
-  echo "[+] Configuring gpsd..."
-  sudo bash -c 'cat > /etc/default/gpsd <<EOF
+# === UART setup for GPS ===
+echo "[+] Enabling UART..."
+sudo sed -i 's/console=serial0,115200 //g' /boot/cmdline.txt
+sudo sed -i '/^enable_uart=/d' /boot/config.txt
+echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
+
+# === gpsd setup ===
+echo "[+] Configuring gpsd..."
+sudo bash -c 'cat > /etc/default/gpsd <<EOF
 START_DAEMON="true"
 GPSD_OPTIONS="-n"
 DEVICES="/dev/serial0"
 USBAUTO="false"
 GPSD_SOCKET="/var/run/gpsd.sock"
 EOF'
-  sudo systemctl enable gpsd.socket
-  sudo systemctl start gpsd.socket
-  sudo systemctl start gpsd
-fi
+sudo systemctl stop gpsd.socket gpsd || true
+sudo systemctl enable gpsd.socket
+sudo systemctl start gpsd.socket
+sudo systemctl start gpsd
 
-if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
-  sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
-fi
-
-# === PROJECT SETUP ===
-echo "[+] Setting up project in $PROJECT_DIR"
+# === Project skeleton ===
+echo "[+] Creating project directory..."
 mkdir -p "$PROJECT_DIR"/{static,templates}
 cd "$PROJECT_DIR"
 
-python3 -m venv "$VENV_DIR"
+# === Python venv and dependencies ===
+echo "[+] Setting up virtualenv and Python packages..."
+python3 -m venv --system-site-packages venv
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 pip install \
-  flask==3.0.3 \
+  flask \
   picamera2 \
-  gpsd-py3==0.3.0 \
-  pynmea2==1.18.0 \
-  paho-mqtt==1.6.1 \
-  Pillow==10.3.0
+  Pillow \
+  gpsd-py3 \
+  pynmea2 \
+  paho-mqtt
 
-# === CONFIG FILES ===
+# === Runtime settings ===
 cat > settings.json << 'EOF'
 {
   "resolution": "1920x1080",
@@ -77,17 +94,15 @@ cat > settings.json << 'EOF'
 }
 EOF
 
+# === MQTT config ===
 cat > config.json << EOF
 {
-  "use_mqtt": "${INSTALL_MQTT,,}",
-  "use_gps": "${INSTALL_GPS,,}"
+  "use_mqtt": "${INSTALL_MQTT,,}"
 }
 EOF
 
-# === PYTHON CODE ===
-
+# === app.py ===
 cat > app.py << 'EOF'
-#!/usr/bin/env python3
 from flask import Flask, render_template, Response, request, redirect
 from camera import Camera
 from gps import GPSReader
@@ -123,13 +138,12 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
+# === camera.py ===
 cat > camera.py << 'EOF'
-#!/usr/bin/env python3
 from picamera2 import Picamera2
-from datetime import datetime
-from PIL import Image, ImageDraw, ImageFont
 import json, io
-import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+from datetime import datetime
 
 class Camera:
     def __init__(self):
@@ -158,35 +172,25 @@ class Camera:
             frame = self.picam.capture_array()
             img = Image.fromarray(frame)
             draw = ImageDraw.Draw(img)
-            overlay = (
-                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
-                f"{gps.last_coords} | {gps.speed_kmh:.1f} km/h"
-            )
-            draw.text((10, img.height - 20), overlay, font=font, fill=(255, 255, 255))
-
-            with io.BytesIO() as buf:
-                img.save(buf, format='JPEG')
-                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' +
-                       buf.getvalue() + b'\r\n')
+            overlay = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {gps.last_coords} | {gps.speed_kmh:.1f} km/h"
+            draw.text((10, img.height - 20), overlay, font=font, fill=(255,255,255))
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buf.getvalue() + b'\r\n')
 EOF
 
+# === gps.py ===
 cat > gps.py << 'EOF'
-#!/usr/bin/env python3
 import json, threading, time
+import gpsd
 
 USE_MQTT = False
-USE_GPS = False
 try:
     with open("config.json") as f:
         cfg = json.load(f)
         USE_MQTT = cfg.get("use_mqtt", "n").lower() == "y"
-        USE_GPS = cfg.get("use_gps", "n").lower() == "y"
 except Exception:
     pass
-
-if USE_GPS:
-    import gpsd
-    gpsd.connect()
 
 if USE_MQTT:
     import paho.mqtt.client as mqtt
@@ -194,6 +198,7 @@ if USE_MQTT:
 class GPSReader(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True)
+        gpsd.connect()
         self.last_coords = "N/A"
         self.speed_kmh = 0.0
         self.client = None
@@ -216,32 +221,31 @@ class GPSReader(threading.Thread):
             "state_topic": "gpscam/speed",
             "unit_of_measurement": "km/h",
             "unique_id": "gpscam_speed",
-            "device": {"identifiers": ["gpscam"], "name": "GPSCam"}
+            "device": {"identifiers": ["gpscam"], "name": "GPSCam"},
         }), retain=True)
         self.client.publish("homeassistant/sensor/gpscam_coords/config", json.dumps({
             "name": "GPSCam Coords",
             "state_topic": "gpscam/coords",
             "unique_id": "gpscam_coords",
-            "device": {"identifiers": ["gpscam"], "name": "GPSCam"}
+            "device": {"identifiers": ["gpscam"], "name": "GPSCam"},
         }), retain=True)
 
     def run(self):
         while True:
-            if USE_GPS:
-                try:
-                    packet = gpsd.get_current()
-                    if packet.mode >= 2:
-                        self.last_coords = f"{packet.lat:.5f}, {packet.lon:.5f}"
-                        self.speed_kmh = packet.hspeed() * 3.6
-                        if self.client:
-                            self.client.publish("gpscam/coords", f"{packet.lat},{packet.lon}", retain=True)
-                            self.client.publish("gpscam/speed", f"{self.speed_kmh:.2f}", retain=True)
-                except Exception:
-                    pass
+            try:
+                packet = gpsd.get_current()
+                if packet.mode >= 2:
+                    self.last_coords = f"{packet.lat:.5f}, {packet.lon:.5f}"
+                    self.speed_kmh = packet.hspeed() * 3.6
+                    if self.client:
+                        self.client.publish("gpscam/coords", f"{packet.lat},{packet.lon}", retain=True)
+                        self.client.publish("gpscam/speed", f"{self.speed_kmh:.2f}", retain=True)
+            except Exception:
+                pass
             time.sleep(1)
 EOF
 
-# === HTML Templates ===
+# === HTML templates ===
 cat > templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -288,7 +292,7 @@ cat > templates/settings.html << 'EOF'
 </html>
 EOF
 
-# === SYSTEMD SERVICE ===
+# === systemd service file ===
 cat > $SERVICE_NAME.service << EOF
 [Unit]
 Description=GPSCam Web UI
@@ -312,11 +316,16 @@ sudo systemctl daemon-reload
 sudo systemctl enable $SERVICE_NAME
 sudo systemctl restart $SERVICE_NAME
 
+# === Done ===
 echo "===================================="
 echo " ✅  GPSCam Installed and Running!"
+echo " 🔄  Reboot recommended for UART changes."
 echo " 🌐  Web UI: http://$(hostname -I | awk '{print $1}'):8080"
-[[ "$INSTALL_GPS" =~ ^[Yy]$ ]] && echo " 📡  GPS support enabled." || echo " 📡  GPS support not installed."
-[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && echo " 🏠  MQTT/Home-Assistant enabled." || echo " 📴  MQTT support disabled."
+if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
+  echo " 🏠  MQTT / Home-Assistant auto-discovery enabled."
+else
+  echo " 📴  MQTT disabled."
+fi
 echo " 🧹  Uninstall: ./install_gpscam.sh --uninstall"
 echo " ♻️  Reinstall: ./install_gpscam.sh --reinstall"
 echo "===================================="
