@@ -3,77 +3,81 @@ set -e
 
 # === CONFIG ===
 SERVICE_NAME=gpscam
+
 if [ -z "$USERNAME" ]; then
   read -p "Enter your Linux username (e.g., pi): " USERNAME
 fi
-read -p "Do you want to install local MQTT support? (y/n): " INSTALL_MQTT
+
+read -p "Install local MQTT support? (y/n): " INSTALL_MQTT
+read -p "Install GPS support? (y/n): " INSTALL_GPS
+
 PROJECT_DIR="/home/$USERNAME/gpscam"
 VENV_DIR="$PROJECT_DIR/venv"
-# ===
+
+# === FUNCTIONS ===
+clean_installation() {
+  echo "[🧹] Cleaning up previous installation..."
+  sudo systemctl stop $SERVICE_NAME.service || true
+  sudo systemctl disable $SERVICE_NAME.service || true
+  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
+  sudo systemctl daemon-reload
+  sudo systemctl reset-failed
+  rm -rf "$PROJECT_DIR"
+  echo "[✅] Previous installation removed."
+}
 
 # === Uninstall ===
 if [[ "$1" == "--uninstall" ]]; then
   echo "[🔻] Uninstalling GPSCam..."
-  sudo systemctl stop $SERVICE_NAME.service || true
-  sudo systemctl disable $SERVICE_NAME.service || true
-  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
-  sudo systemctl daemon-reload
-  sudo systemctl reset-failed
-  rm -rf "$PROJECT_DIR"
-  echo "[✅] GPSCam removed."
+  clean_installation
   exit 0
 fi
 
-# === Reinstall (wipe + fresh install) ===
+# === Reinstall ===
 if [[ "$1" == "--reinstall" ]]; then
   echo "[♻️] Reinstalling GPSCam..."
-  sudo systemctl stop $SERVICE_NAME.service || true
-  sudo systemctl disable $SERVICE_NAME.service || true
-  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
-  sudo systemctl daemon-reload
-  sudo systemctl reset-failed
-  rm -rf "$PROJECT_DIR"
-  echo "[✅] Cleaned old installation."
-  sleep 2
+  clean_installation
 fi
 
 # === OS-level packages ===
-echo "[+] Installing APT dependencies..."
-sudo apt update && sudo apt install --no-install-recommends -y \
+echo "[+] Installing required APT packages..."
+sudo apt update
+sudo apt install --no-install-recommends -y \
   python3 python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
-  gpsd gpsd-clients
+  opencv-data libjpeg-dev
 
-if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
-  sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
-fi
+if [[ "$INSTALL_GPS" =~ ^[Yy]$ ]]; then
+  sudo apt install --no-install-recommends -y gpsd gpsd-clients
 
-# === Enable UART (for most HAT GPS modules) ===
-echo "[+] Configuring UART for GPS module..."
-sudo sed -i 's/console=serial0,115200 //g' /boot/cmdline.txt
-sudo sed -i '/^enable_uart=/d' /boot/config.txt
-echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
+  echo "[+] Configuring UART for GPS module..."
+  sudo sed -i 's/console=serial0,115200 //g' /boot/cmdline.txt
+  sudo sed -i '/^enable_uart=/d' /boot/config.txt
+  echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
 
-# === gpsd setup ===
-echo "[+] Configuring gpsd..."
-sudo bash -c 'cat > /etc/default/gpsd <<EOF
+  echo "[+] Configuring gpsd..."
+  sudo bash -c 'cat > /etc/default/gpsd <<EOF
 START_DAEMON="true"
 GPSD_OPTIONS="-n"
 DEVICES="/dev/serial0"
 USBAUTO="false"
 GPSD_SOCKET="/var/run/gpsd.sock"
 EOF'
-sudo systemctl stop gpsd.socket gpsd || true
-sudo systemctl enable gpsd.socket
-sudo systemctl start gpsd.socket
-sudo systemctl start gpsd
+  sudo systemctl enable gpsd.socket
+  sudo systemctl start gpsd.socket
+  sudo systemctl start gpsd
+fi
 
-# === Project skeleton ===
-echo "[+] Setting up project directory..."
+if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
+  sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
+fi
+
+# === Project Setup ===
+echo "[+] Setting up project directory at $PROJECT_DIR..."
 mkdir -p "$PROJECT_DIR"/{static,templates}
 cd "$PROJECT_DIR"
 
-python3 -m venv --system-site-packages venv
+python3 -m venv --system-site-packages "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 pip install \
@@ -94,18 +98,17 @@ cat > settings.json << 'EOF'
 }
 EOF
 
-# === store the MQTT preference for gps.py ===
+# === Feature flags ===
 cat > config.json << EOF
 {
-  "use_mqtt": "${INSTALL_MQTT,,}"
+  "use_mqtt": "${INSTALL_MQTT,,}",
+  "use_gps": "${INSTALL_GPS,,}"
 }
 EOF
-# ----------------------------------------------------------------------
 
 # === app.py ===
 cat > app.py << 'EOF'
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from flask import Flask, render_template, Response, request, redirect
 from camera import Camera
 from gps import GPSReader
@@ -144,7 +147,6 @@ EOF
 # === camera.py ===
 cat > camera.py << 'EOF'
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from picamera2 import Picamera2
 import json, cv2
 from datetime import datetime
@@ -168,7 +170,7 @@ class Camera:
         self.picam.start()
 
     def start(self):
-        pass  # kept for symmetry
+        pass
 
     def stream_frames(self, gps):
         while True:
@@ -189,39 +191,32 @@ EOF
 # === gps.py ===
 cat > gps.py << 'EOF'
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-gps.py  – reads GPS via gpsd and *optionally* publishes to MQTT.
+import json, threading, time
+import os
 
-If config.json contains `"use_mqtt": "y"` or `"use_mqtt": "Y"`,
-MQTT is enabled; otherwise all MQTT code is skipped gracefully.
-"""
-import json, os, threading, time
-import gpsd                # pip install gpsd-py3
-
-# ----------------------------------------------------------------------
-# Read user preference --------------------------------------------------
 USE_MQTT = False
+USE_GPS = False
 try:
     with open("config.json") as f:
         cfg = json.load(f)
         USE_MQTT = cfg.get("use_mqtt", "n").lower() == "y"
+        USE_GPS = cfg.get("use_gps", "n").lower() == "y"
 except Exception:
-    # Missing/invalid config → fall back to False
     pass
+
+if USE_GPS:
+    import gpsd
+    gpsd.connect()
 
 if USE_MQTT:
     import paho.mqtt.client as mqtt
-# ----------------------------------------------------------------------
 
 class GPSReader(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True)
-        gpsd.connect()
         self.last_coords = "N/A"
-        self.speed_kmh   = 0.0
+        self.speed_kmh = 0.0
 
-        # === MQTT init only if requested ===
         self.client = None
         if USE_MQTT:
             try:
@@ -230,78 +225,56 @@ class GPSReader(threading.Thread):
                 self.client.loop_start()
                 self._publish_discovery()
             except Exception as e:
-                # Connection failed → disable MQTT for this run
                 print("[GPSCam] MQTT disabled:", e)
                 self.client = None
 
-    # === Home-Assistant discovery ===
     def _publish_discovery(self):
         if not self.client:
             return
-        self.client.publish(
-            "homeassistant/sensor/gpscam_speed/config",
-            json.dumps({
-                "name": "GPSCam Speed",
-                "state_topic": "gpscam/speed",
-                "unit_of_measurement": "km/h",
-                "unique_id": "gpscam_speed",
-                "device": {"identifiers": ["gpscam"], "name": "GPSCam"},
-            }),
-            retain=True
-        )
-        self.client.publish(
-            "homeassistant/sensor/gpscam_coords/config",
-            json.dumps({
-                "name": "GPSCam Coords",
-                "state_topic": "gpscam/coords",
-                "unique_id": "gpscam_coords",
-                "device": {"identifiers": ["gpscam"], "name": "GPSCam"},
-            }),
-            retain=True
-        )
+        self.client.publish("homeassistant/sensor/gpscam_speed/config", json.dumps({
+            "name": "GPSCam Speed",
+            "state_topic": "gpscam/speed",
+            "unit_of_measurement": "km/h",
+            "unique_id": "gpscam_speed",
+            "device": {"identifiers": ["gpscam"], "name": "GPSCam"}
+        }), retain=True)
+        self.client.publish("homeassistant/sensor/gpscam_coords/config", json.dumps({
+            "name": "GPSCam Coords",
+            "state_topic": "gpscam/coords",
+            "unique_id": "gpscam_coords",
+            "device": {"identifiers": ["gpscam"], "name": "GPSCam"}
+        }), retain=True)
 
-    # === Main thread loop ===
     def run(self):
         while True:
-            try:
-                packet = gpsd.get_current()
-                if packet.mode >= 2:                  # 2-D fix or better
-                    self.last_coords = (
-                        f"{packet.lat:.5f}, {packet.lon:.5f}"
-                    )
-                    self.speed_kmh = packet.hspeed() * 3.6
+            if USE_GPS:
+                try:
+                    packet = gpsd.get_current()
+                    if packet.mode >= 2:
+                        self.last_coords = f"{packet.lat:.5f}, {packet.lon:.5f}"
+                        self.speed_kmh = packet.hspeed() * 3.6
 
-                    if self.client:  # publish only when MQTT enabled
-                        self.client.publish(
-                            "gpscam/coords",
-                            f"{packet.lat},{packet.lon}",
-                            retain=True
-                        )
-                        self.client.publish(
-                            "gpscam/speed",
-                            f"{self.speed_kmh:.2f}",
-                            retain=True
-                        )
-            except Exception:
-                pass
+                        if self.client:
+                            self.client.publish("gpscam/coords", f"{packet.lat},{packet.lon}", retain=True)
+                            self.client.publish("gpscam/speed", f"{self.speed_kmh:.2f}", retain=True)
+                except Exception:
+                    pass
             time.sleep(1)
 EOF
 
-# === HTML templates ===
+# === index.html ===
 cat > templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>GPSCam Live</title>
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 </head>
 <body class="bg-dark text-light">
   <div class="container text-center mt-4">
     <h1>GPSCam Live Feed</h1>
-    <img src="/video_feed"
-         class="img-fluid mt-3 border border-light rounded shadow">
+    <img src="/video_feed" class="img-fluid mt-3 border border-light rounded shadow">
     <div class="mt-4">
       <a href="/settings" class="btn btn-outline-light">Settings</a>
     </div>
@@ -310,14 +283,14 @@ cat > templates/index.html << 'EOF'
 </html>
 EOF
 
+# === settings.html ===
 cat > templates/settings.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Settings</title>
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 </head>
 <body class="bg-light">
   <div class="container mt-4">
@@ -337,7 +310,7 @@ cat > templates/settings.html << 'EOF'
 </html>
 EOF
 
-# === systemd service file ===
+# === systemd service ===
 cat > $SERVICE_NAME.service << EOF
 [Unit]
 Description=GPSCam Web UI
@@ -354,22 +327,19 @@ ExecStartPre=/bin/sleep 5
 [Install]
 WantedBy=multi-user.target
 EOF
-sudo cp $SERVICE_NAME.service /etc/systemd/system/
 
+sudo cp $SERVICE_NAME.service /etc/systemd/system/
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable $SERVICE_NAME
 sudo systemctl restart $SERVICE_NAME
 
+# === Final Info ===
 echo "===================================="
 echo " ✅  GPSCam Installed and Running!"
-echo " 🔄  Reboot recommended to finalise UART/GPS changes."
 echo " 🌐  Web UI: http://$(hostname -I | awk '{print $1}'):8080"
-if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
-  echo " 🏠  MQTT / Home-Assistant auto-discovery enabled."
-else
-  echo " 📴  MQTT disabled for this installation."
-fi
+[[ "$INSTALL_GPS" =~ ^[Yy]$ ]] && echo " 📡  GPS support enabled." || echo " 📡  GPS support not installed."
+[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && echo " 🏠  MQTT/Home-Assistant enabled." || echo " 📴  MQTT support disabled."
 echo " 🧹  Uninstall: ./install_gpscam.sh --uninstall"
 echo " ♻️  Reinstall: ./install_gpscam.sh --reinstall"
 echo "===================================="
