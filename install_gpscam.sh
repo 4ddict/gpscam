@@ -45,7 +45,7 @@ sudo apt update
 sudo apt install --no-install-recommends -y \
   python3 python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
-  opencv-data libjpeg-dev
+  libjpeg-dev
 
 if [[ "$INSTALL_GPS" =~ ^[Yy]$ ]]; then
   sudo apt install --no-install-recommends -y gpsd gpsd-clients
@@ -86,7 +86,7 @@ pip install \
   gpsd-py3==0.3.0 \
   pynmea2==1.18.0 \
   paho-mqtt==1.6.1 \
-  opencv-python-headless==4.9.0.80
+  Pillow==10.3.0
 
 # === Runtime settings ===
 cat > settings.json << 'EOF'
@@ -144,12 +144,14 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
-# === camera.py ===
+# === camera.py (Pillow version) ===
 cat > camera.py << 'EOF'
 #!/usr/bin/env python3
 from picamera2 import Picamera2
-import json, cv2
 from datetime import datetime
+from PIL import Image, ImageDraw, ImageFont
+import json, io
+import numpy as np
 
 class Camera:
     def __init__(self):
@@ -173,26 +175,27 @@ class Camera:
         pass
 
     def stream_frames(self, gps):
+        font = ImageFont.load_default()
         while True:
             frame = self.picam.capture_array()
+            img = Image.fromarray(frame)
+            draw = ImageDraw.Draw(img)
             overlay = (
                 f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
                 f"{gps.last_coords} | {gps.speed_kmh:.1f} km/h"
             )
-            cv2.putText(
-                frame, overlay, (10, frame.shape[0]-10),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2
-            )
-            _, jpeg = cv2.imencode('.jpg', frame)
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
-                   + jpeg.tobytes() + b'\r\n')
+            draw.text((10, img.height - 20), overlay, font=font, fill=(255, 255, 255))
+
+            with io.BytesIO() as buf:
+                img.save(buf, format='JPEG')
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' +
+                       buf.getvalue() + b'\r\n')
 EOF
 
 # === gps.py ===
 cat > gps.py << 'EOF'
 #!/usr/bin/env python3
 import json, threading, time
-import os
 
 USE_MQTT = False
 USE_GPS = False
@@ -216,8 +219,8 @@ class GPSReader(threading.Thread):
         super().__init__(daemon=True)
         self.last_coords = "N/A"
         self.speed_kmh = 0.0
-
         self.client = None
+
         if USE_MQTT:
             try:
                 self.client = mqtt.Client()
@@ -253,7 +256,6 @@ class GPSReader(threading.Thread):
                     if packet.mode >= 2:
                         self.last_coords = f"{packet.lat:.5f}, {packet.lon:.5f}"
                         self.speed_kmh = packet.hspeed() * 3.6
-
                         if self.client:
                             self.client.publish("gpscam/coords", f"{packet.lat},{packet.lon}", retain=True)
                             self.client.publish("gpscam/speed", f"{self.speed_kmh:.2f}", retain=True)
