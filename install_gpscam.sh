@@ -28,28 +28,26 @@ clean_installation() {
 
 # === Uninstall ===
 if [[ "$1" == "--uninstall" ]]; then
-  echo "[🔻] Uninstalling GPSCam..."
   clean_installation
   exit 0
 fi
 
 # === Reinstall ===
 if [[ "$1" == "--reinstall" ]]; then
-  echo "[♻️] Reinstalling GPSCam..."
   clean_installation
 fi
 
-# === OS-level packages (minimal) ===
-echo "[+] Installing minimal APT packages..."
+# === APT Dependencies (minimal, no OpenCV) ===
+echo "[+] Installing minimal system packages..."
 sudo apt update
 sudo apt install --no-install-recommends -y \
   python3 python3-venv python3-pip \
-  libcamera-apps libjpeg-dev
+  libcamera0 libcamera-dev libjpeg-dev
 
 if [[ "$INSTALL_GPS" =~ ^[Yy]$ ]]; then
   sudo apt install --no-install-recommends -y gpsd gpsd-clients
 
-  echo "[+] Configuring UART for GPS module..."
+  echo "[+] Configuring UART for GPS..."
   sudo sed -i 's/console=serial0,115200 //g' /boot/cmdline.txt
   sudo sed -i '/^enable_uart=/d' /boot/config.txt
   echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
@@ -72,7 +70,6 @@ if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
 fi
 
 # === Project Setup ===
-echo "[+] Setting up project directory at $PROJECT_DIR..."
 mkdir -p "$PROJECT_DIR"/{static,templates}
 cd "$PROJECT_DIR"
 
@@ -87,7 +84,7 @@ pip install \
   paho-mqtt==1.6.1 \
   Pillow==10.3.0
 
-# === Runtime settings ===
+# === Runtime Config ===
 cat > settings.json << 'EOF'
 {
   "resolution": "1920x1080",
@@ -97,7 +94,6 @@ cat > settings.json << 'EOF'
 }
 EOF
 
-# === Feature flags ===
 cat > config.json << EOF
 {
   "use_mqtt": "${INSTALL_MQTT,,}",
@@ -105,7 +101,7 @@ cat > config.json << EOF
 }
 EOF
 
-# === app.py ===
+# === Python Files ===
 cat > app.py << 'EOF'
 #!/usr/bin/env python3
 from flask import Flask, render_template, Response, request, redirect
@@ -143,7 +139,6 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
-# === camera.py ===
 cat > camera.py << 'EOF'
 #!/usr/bin/env python3
 from picamera2 import Picamera2
@@ -191,7 +186,6 @@ class Camera:
                        buf.getvalue() + b'\r\n')
 EOF
 
-# === gps.py ===
 cat > gps.py << 'EOF'
 #!/usr/bin/env python3
 import json, threading, time
@@ -263,7 +257,7 @@ class GPSReader(threading.Thread):
             time.sleep(1)
 EOF
 
-# === index.html ===
+# === Templates ===
 cat > templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -284,7 +278,6 @@ cat > templates/index.html << 'EOF'
 </html>
 EOF
 
-# === settings.html ===
 cat > templates/settings.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -311,7 +304,7 @@ cat > templates/settings.html << 'EOF'
 </html>
 EOF
 
-# === systemd service ===
+# === Systemd Service ===
 cat > $SERVICE_NAME.service << EOF
 [Unit]
 Description=GPSCam Web UI
@@ -335,7 +328,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable $SERVICE_NAME
 sudo systemctl restart $SERVICE_NAME
 
-# === Final Info ===
 echo "===================================="
 echo " ✅  GPSCam Installed and Running!"
-echo " 🌐  Web UI: http://$(hostname -I
+echo " 🌐  Web UI: http://$(hostname -I | awk '{print $1}'):8080"
+[[ "$INSTALL_GPS" =~ ^[Yy]$ ]] && echo " 📡  GPS support enabled." || echo " 📡  GPS support not installed."
+[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && echo " 🏠  MQTT/Home-Assistant enabled." || echo " 📴  MQTT support disabled."
+echo " 🧹  Uninstall: ./install_gpscam.sh --uninstall"
+echo " ♻️  Reinstall: ./install_gpscam.sh --reinstall"
+echo "===================================="
