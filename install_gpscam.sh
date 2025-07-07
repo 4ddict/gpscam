@@ -39,13 +39,12 @@ if [[ "$1" == "--reinstall" ]]; then
   clean_installation
 fi
 
-# === OS-level packages ===
-echo "[+] Installing required APT packages..."
+# === OS-level packages (minimal) ===
+echo "[+] Installing minimal APT packages..."
 sudo apt update
 sudo apt install --no-install-recommends -y \
   python3 python3-venv python3-pip \
-  python3-libcamera python3-picamera2 libcamera-apps \
-  libjpeg-dev
+  libcamera-apps libjpeg-dev
 
 if [[ "$INSTALL_GPS" =~ ^[Yy]$ ]]; then
   sudo apt install --no-install-recommends -y gpsd gpsd-clients
@@ -77,12 +76,12 @@ echo "[+] Setting up project directory at $PROJECT_DIR..."
 mkdir -p "$PROJECT_DIR"/{static,templates}
 cd "$PROJECT_DIR"
 
-python3 -m venv --system-site-packages "$VENV_DIR"
+python3 -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 pip install \
   flask==3.0.3 \
-  picamera2==0.3.16 \
+  picamera2 \
   gpsd-py3==0.3.0 \
   pynmea2==1.18.0 \
   paho-mqtt==1.6.1 \
@@ -144,7 +143,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
-# === camera.py (Pillow version) ===
+# === camera.py ===
 cat > camera.py << 'EOF'
 #!/usr/bin/env python3
 from picamera2 import Picamera2
@@ -339,9 +338,4 @@ sudo systemctl restart $SERVICE_NAME
 # === Final Info ===
 echo "===================================="
 echo " ✅  GPSCam Installed and Running!"
-echo " 🌐  Web UI: http://$(hostname -I | awk '{print $1}'):8080"
-[[ "$INSTALL_GPS" =~ ^[Yy]$ ]] && echo " 📡  GPS support enabled." || echo " 📡  GPS support not installed."
-[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && echo " 🏠  MQTT/Home-Assistant enabled." || echo " 📴  MQTT support disabled."
-echo " 🧹  Uninstall: ./install_gpscam.sh --uninstall"
-echo " ♻️  Reinstall: ./install_gpscam.sh --reinstall"
-echo "===================================="
+echo " 🌐  Web UI: http://$(hostname -I
