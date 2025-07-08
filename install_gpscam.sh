@@ -64,7 +64,6 @@ sudo pip3 install \
 
 echo "📷  Enabling camera and serial interfaces..."
 sudo raspi-config nonint do_camera 0
-sudo raspi-config nonint do_serial 2
 sudo raspi-config nonint do_serial 1
 
 echo "📁  Creating project directory..."
