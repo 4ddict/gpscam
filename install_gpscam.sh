@@ -6,7 +6,7 @@ INSTALL_MQTT=""
 INSTALL_GPS=""
 UPDATE_SYSTEM=""
 
-# 🧹 Uninstall GPSCam
+# 🧹 Uninstall
 if [[ "$1" == "--uninstall" ]]; then
   echo "🧹  Uninstalling GPSCam..."
   sudo systemctl stop gpscam.service
@@ -19,29 +19,29 @@ if [[ "$1" == "--uninstall" ]]; then
   exit 0
 fi
 
-# ♻️ Reinstall GPSCam
+# ♻️ Reinstall
 if [[ "$1" == "--reinstall" ]]; then
   echo "♻️  Reinstalling GPSCam..."
   "$0" --uninstall
   exec "$0"
 fi
 
-echo "🛰️  GPSCam Installer (Ultra-Lean)"
-echo "===================================="
+echo "🛰️  GPSCam (Super-Lean Mode)"
+echo "============================="
 
 read -p "📡  Enable GPS support? (y/n): " INSTALL_GPS
 read -p "📬  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
 read -p "🧼  Do you want to update the system (apt upgrade)? (y/n): " UPDATE_SYSTEM
 
-echo "📦  Installing only what is absolutely needed..."
 sudo apt update
 
 if [[ "$UPDATE_SYSTEM" =~ ^[Yy]$ ]]; then
-  echo "🔄  Performing full system upgrade..."
+  echo "🔄  Upgrading system..."
   sudo apt full-upgrade -y
 fi
 
-# Minimal packages only
+echo "📦  Installing minimal packages..."
+
 sudo apt install -y \
   python3-pip \
   python3-flask \
@@ -49,22 +49,17 @@ sudo apt install -y \
   python3-numpy \
   python3-libcamera \
   python3-kms++ \
-  python3-picamera2 \
+  libcamera0 \
+  libcamera-dev \
   raspi-config \
   jq
 
-# Required Python modules
-sudo pip3 install \
-  flask-bootstrap \
-  pynmea2 \
-  Pillow \
-  --break-system-packages
-
+sudo pip3 install flask-bootstrap Pillow pynmea2 --break-system-packages
 [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install paho-mqtt --break-system-packages
 
-echo "📷  Enabling camera and serial interfaces..."
+echo "📷  Enabling camera and serial..."
 sudo raspi-config nonint do_camera 0
-sudo raspi-config nonint do_serial 1  # This disables shell and enables serial port
+sudo raspi-config nonint do_serial 1
 
 echo "📁  Creating project directory..."
 mkdir -p "$INSTALL_PATH/templates"
@@ -75,25 +70,17 @@ echo "⚙️  Writing application files..."
 # gpscam.py
 cat << 'EOF' > "$INSTALL_PATH/gpscam.py"
 import os
+import io
+import time
 from flask import Flask, render_template, Response
-from picamera2 import Picamera2
 from threading import Thread
-from io import BytesIO
 from PIL import Image
 import serial
 import pynmea2
-import time
+import numpy as np
+import libcamera
 
 app = Flask(__name__)
-
-picam2 = None
-try:
-    picam2 = Picamera2()
-    config = picam2.create_video_configuration(main={"size": (1920, 1080)}, controls={"FrameRate": 15})
-    picam2.configure(config)
-    picam2.start()
-except Exception as e:
-    print("Camera init failed:", e)
 
 gps_data = {
     "lat": None,
@@ -117,24 +104,26 @@ def read_gps():
                 except:
                     continue
     except Exception as e:
-        print("GPS error:", e)
+        print("GPS Error:", e)
 
 Thread(target=read_gps, daemon=True).start()
 
-def gen_frames():
-    if not picam2:
+def capture_stream():
+    with libcamera.CameraManager().get_camera("0") as cam:
+        config = cam.generate_configuration(libcamera.StreamRole.Viewfinder)
+        config["main"].size = (640, 480)
+        config["main"].format = "RGB888"
+        cam.configure(config)
+        cam.start()
+
         while True:
-            time.sleep(1)
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
-    while True:
-        try:
-            frame = picam2.capture_array()
-            buffer = BytesIO()
-            Image.fromarray(frame).save(buffer, format='JPEG')
+            request = cam.capture_request()
+            frame = request.make_array("main")
+            image = Image.fromarray(frame)
+            buffer = io.BytesIO()
+            image.save(buffer, format='JPEG')
+            request.release()
             yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.getvalue() + b'\r\n')
-        except Exception as e:
-            print("Frame capture error:", e)
-            time.sleep(1)
 
 @app.route('/')
 def index():
@@ -142,7 +131,7 @@ def index():
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(capture_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/settings')
 def settings():
@@ -196,10 +185,9 @@ cat << 'EOF' > "$INSTALL_PATH/templates/settings.html"
 EOF
 
 # systemd service
-echo "🧠  Creating systemd service..."
 sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
-Description=GPSCam Video Stream with GPS Overlay
+Description=GPSCam Live Stream
 After=network.target
 
 [Service]
@@ -214,7 +202,7 @@ User=$USER
 WantedBy=multi-user.target
 EOF
 
-echo "🚀  Enabling and starting service..."
+echo "🚀 Enabling service..."
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable gpscam.service
