@@ -37,12 +37,12 @@ if [[ "$1" == "--reinstall" ]]; then
   sleep 2
 fi
 
-# === APT dependencies (minimal) ===
+# === APT dependencies (minimal + libcap-dev fix) ===
 echo "[+] Installing minimal APT packages..."
 sudo apt update && sudo apt install --no-install-recommends -y \
   python3 python3-venv python3-pip \
   python3-libcamera python3-picamera2 libcamera-apps \
-  gpsd
+  gpsd libcap-dev
 
 if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
   sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
@@ -250,7 +250,7 @@ class GPSReader(threading.Thread):
             time.sleep(1)
 EOF
 
-# === Templates ===
+# === HTML templates ===
 cat > templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -299,7 +299,7 @@ cat > templates/settings.html << 'EOF'
 </html>
 EOF
 
-# === Systemd service ===
+# === systemd service ===
 cat > $SERVICE_NAME.service << EOF
 [Unit]
 Description=GPSCam Web UI
