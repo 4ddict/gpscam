@@ -41,7 +41,7 @@ if [[ "$UPDATE_SYSTEM" =~ ^[Yy]$ ]]; then
   sudo apt full-upgrade -y
 fi
 
-# Always install core dependencies
+# Core dependencies
 sudo apt install -y \
   python3-pip \
   python3-flask \
@@ -53,40 +53,48 @@ sudo apt install -y \
   raspi-config \
   jq
 
+# Python packages
+sudo pip3 install \
+  flask-bootstrap \
+  pynmea2 \
+  Pillow \
+  --break-system-packages
+
 [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install paho-mqtt --break-system-packages
-sudo pip3 install flask-bootstrap --break-system-packages
 
 echo "📷  Enabling camera and serial interfaces..."
-
 sudo raspi-config nonint do_camera 0
-sudo raspi-config nonint do_serial 2  # Disable login shell
-sudo raspi-config nonint do_serial 1  # Enable serial hardware
+sudo raspi-config nonint do_serial 2
+sudo raspi-config nonint do_serial 1
 
 echo "📁  Creating project directory..."
-
 mkdir -p "$INSTALL_PATH/templates"
 mkdir -p "$INSTALL_PATH/static"
 
 echo "⚙️  Writing application files..."
 
-# --- gpscam.py ---
+# gpscam.py
 cat << 'EOF' > "$INSTALL_PATH/gpscam.py"
 import os
 from flask import Flask, render_template, Response
 from picamera2 import Picamera2
 from threading import Thread
+from io import BytesIO
+from PIL import Image
 import serial
 import pynmea2
+import time
 
 app = Flask(__name__)
 
-picam2 = Picamera2()
-camera_config = picam2.create_video_configuration(
-    main={"size": (1920, 1080)},
-    controls={"FrameRate": 15}
-)
-picam2.configure(camera_config)
-picam2.start()
+picam2 = None
+try:
+    picam2 = Picamera2()
+    config = picam2.create_video_configuration(main={"size": (1920, 1080)}, controls={"FrameRate": 15})
+    picam2.configure(config)
+    picam2.start()
+except Exception as e:
+    print("Camera init failed:", e)
 
 gps_data = {
     "lat": None,
@@ -101,20 +109,33 @@ def read_gps():
         while True:
             line = ser.readline().decode("utf-8", errors="ignore")
             if line.startswith('$GPRMC'):
-                msg = pynmea2.parse(line)
-                gps_data["lat"] = msg.latitude
-                gps_data["lon"] = msg.longitude
-                gps_data["speed"] = round(float(msg.spd_over_grnd) * 1.852, 2)
-                gps_data["timestamp"] = msg.datetime.strftime("%Y-%m-%d %H:%M:%S")
+                try:
+                    msg = pynmea2.parse(line)
+                    gps_data["lat"] = msg.latitude
+                    gps_data["lon"] = msg.longitude
+                    gps_data["speed"] = round(float(msg.spd_over_grnd) * 1.852, 2)
+                    gps_data["timestamp"] = msg.datetime.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    continue
     except Exception as e:
-        print("GPS Error:", e)
+        print("GPS error:", e)
 
 Thread(target=read_gps, daemon=True).start()
 
 def gen_frames():
+    if not picam2:
+        while True:
+            time.sleep(1)
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
     while True:
-        frame = picam2.capture_array()
-        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame.tobytes() + b'\r\n')
+        try:
+            frame = picam2.capture_array()
+            buffer = BytesIO()
+            Image.fromarray(frame).save(buffer, format='JPEG')
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.getvalue() + b'\r\n')
+        except Exception as e:
+            print("Frame capture error:", e)
+            time.sleep(1)
 
 @app.route('/')
 def index():
@@ -132,13 +153,13 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
-# --- index.html ---
+# index.html
 cat << 'EOF' > "$INSTALL_PATH/templates/index.html"
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>GPSCam Live</title>
+  <title>GPSCam Live Stream</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-dark text-white">
@@ -156,7 +177,7 @@ cat << 'EOF' > "$INSTALL_PATH/templates/index.html"
 </html>
 EOF
 
-# --- settings.html ---
+# settings.html
 cat << 'EOF' > "$INSTALL_PATH/templates/settings.html"
 <!DOCTYPE html>
 <html>
@@ -175,9 +196,8 @@ cat << 'EOF' > "$INSTALL_PATH/templates/settings.html"
 </html>
 EOF
 
-# --- systemd service ---
+# systemd service
 echo "🧠  Creating systemd service..."
-
 sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=GPSCam Video Stream with GPS Overlay
@@ -196,7 +216,6 @@ WantedBy=multi-user.target
 EOF
 
 echo "🚀  Enabling and starting service..."
-
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable gpscam.service
