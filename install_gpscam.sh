@@ -1,6 +1,6 @@
 #!/bin/bash
 
-INSTALL_PATH="/home/pi/gpscam"
+INSTALL_PATH="$HOME/gpscam"
 SERVICE_FILE="/etc/systemd/system/gpscam.service"
 INSTALL_MQTT=""
 INSTALL_GPS=""
@@ -31,7 +31,7 @@ echo "===================================="
 
 read -p "📡  Enable GPS support? (y/n): " INSTALL_GPS
 read -p "📬  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
-read -p "🧼  Do you want to update the system (apt upgrade)? takes longer! (y/n): " UPDATE_SYSTEM
+read -p "🧼  Do you want to update the system (apt upgrade)? (y/n): " UPDATE_SYSTEM
 
 echo "📦  Installing required packages..."
 sudo apt update
@@ -41,7 +41,7 @@ if [[ "$UPDATE_SYSTEM" =~ ^[Yy]$ ]]; then
   sudo apt full-upgrade -y
 fi
 
-# Always install the core dependencies
+# Always install core dependencies
 sudo apt install -y \
   python3-pip \
   python3-flask \
@@ -53,8 +53,8 @@ sudo apt install -y \
   raspi-config \
   jq
 
-[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install paho-mqtt
-sudo pip3 install flask-bootstrap
+[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install paho-mqtt --break-system-packages
+sudo pip3 install flask-bootstrap --break-system-packages
 
 echo "📷  Enabling camera and serial interfaces..."
 
@@ -189,7 +189,7 @@ WorkingDirectory=$INSTALL_PATH
 StandardOutput=inherit
 StandardError=inherit
 Restart=always
-User=pi
+User=$USER
 
 [Install]
 WantedBy=multi-user.target
@@ -212,4 +212,6 @@ if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
 else
   echo " 📴  MQTT disabled for this installation."
 fi
-echo " 🧹  Uninstall: ./install_gps_
+echo " 🧹  Uninstall: ./install_gpscam.sh --uninstall"
+echo " ♻️  Reinstall: ./install_gpscam.sh --reinstall"
+echo "===================================="
