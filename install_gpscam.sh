@@ -25,14 +25,11 @@ prompt_yes_no() {
 
 uninstall_gpscam() {
   echo "🧼 Uninstalling GPSCam..."
-
   sudo systemctl stop gpscam
   sudo systemctl disable gpscam
   sudo rm -f "$SERVICE_FILE"
   sudo systemctl daemon-reexec
-
   rm -rf "$PROJECT_DIR"
-
   echo "✅ Uninstalled."
   exit 0
 }
@@ -45,11 +42,9 @@ reinstall_gpscam() {
 
 install_gpscam() {
   print_header
-
   [[ "$1" == "--uninstall" ]] && uninstall_gpscam
   [[ "$1" == "--reinstall" ]] && reinstall_gpscam
 
-  # Prompt user
   UPDATE_SYS=false
   ENABLE_GPS=false
   INSTALL_MQTT=false
@@ -63,11 +58,11 @@ install_gpscam() {
     sudo apt update && sudo apt full-upgrade -y
   fi
 
-  echo "📦 Installing dependencies..."
-  sudo apt install -y python3 python3-pip python3-venv libatlas-base-dev \
-    libjpeg-dev libtiff5-dev libjasper-dev libpng-dev libavcodec-dev \
-    libavformat-dev libswscale-dev libv4l-dev libgtk2.0-dev libcanberra-gtk* \
-    gpsd gpsd-clients python3-gps python3-opencv python3-flask fswebcam
+  echo "📦 Installing minimal dependencies for headless mode..."
+  sudo apt install -y python3 python3-pip python3-venv \
+    python3-opencv python3-flask python3-gps \
+    gpsd gpsd-clients libatlas-base-dev \
+    v4l-utils raspi-config
 
   if $ENABLE_GPS; then
     echo "🛠 Enabling serial and GPS..."
@@ -76,17 +71,14 @@ install_gpscam() {
     sudo systemctl start gpsd
   fi
 
-  echo "📁 Setting up project directory at $PROJECT_DIR..."
+  echo "📁 Creating project directory at $PROJECT_DIR..."
   mkdir -p "$PROJECT_DIR/app/static"
   mkdir -p "$PROJECT_DIR/app/templates"
 
-  # Write basic files
   cat > "$PROJECT_DIR/app/server.py" <<EOF
 from flask import Flask, render_template, Response
 import cv2
 from datetime import datetime
-import threading
-import time
 
 app = Flask(__name__)
 camera = cv2.VideoCapture(0)
@@ -96,13 +88,12 @@ def gen_frames():
         success, frame = camera.read()
         if not success:
             break
-        else:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            cv2.putText(frame, timestamp, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
-            ret, buffer = cv2.imencode('.jpg', frame)
-            frame = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cv2.putText(frame, timestamp, (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+        ret, buffer = cv2.imencode('.jpg', frame)
+        frame = buffer.tobytes()
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
 @app.route('/')
 def index():
@@ -110,9 +101,10 @@ def index():
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(gen_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
 EOF
 
@@ -132,12 +124,13 @@ EOF
 </html>
 EOF
 
-  echo "🔧 Creating virtual environment..."
+  echo "🔧 Creating virtual environment and installing Python packages..."
   python3 -m venv "$PYTHON_ENV"
   source "$PYTHON_ENV/bin/activate"
   pip install --upgrade pip flask opencv-python
+  if $INSTALL_MQTT; then pip install paho-mqtt; fi
 
-  echo "📜 Setting up systemd service..."
+  echo "📜 Creating systemd service..."
   sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=GPSCam Web Service
@@ -154,7 +147,7 @@ Environment=FLASK_ENV=production
 WantedBy=multi-user.target
 EOF
 
-  sudo systemctl daemon-reload
+  sudo systemctl daemon-reexec
   sudo systemctl enable gpscam
   sudo systemctl start gpscam
 
