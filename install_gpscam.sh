@@ -46,13 +46,13 @@ sudo apt install -y \
   python3-flask \
   python3-serial \
   python3-numpy \
-  python3-libcamera \
   python3-kms++ \
+  jq \
   raspi-config \
-  jq
+  libcap-dev
 
-sudo pip3 install flask-bootstrap Pillow pynmea2 --break-system-packages
-[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install paho-mqtt --break-system-packages
+sudo pip3 install --break-system-packages flask-bootstrap Pillow pynmea2
+[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install --break-system-packages paho-mqtt
 
 echo "📷  Enabling camera and serial..."
 sudo raspi-config nonint do_camera 0
@@ -75,7 +75,7 @@ from PIL import Image
 import serial
 import pynmea2
 import numpy as np
-import libcamera
+# Placeholder: camera integration needs to be confirmed
 
 app = Flask(__name__)
 
@@ -106,21 +106,10 @@ def read_gps():
 Thread(target=read_gps, daemon=True).start()
 
 def capture_stream():
-    with libcamera.CameraManager().get_camera("0") as cam:
-        config = cam.generate_configuration(libcamera.StreamRole.Viewfinder)
-        config["main"].size = (640, 480)
-        config["main"].format = "RGB888"
-        cam.configure(config)
-        cam.start()
-
-        while True:
-            request = cam.capture_request()
-            frame = request.make_array("main")
-            image = Image.fromarray(frame)
-            buffer = io.BytesIO()
-            image.save(buffer, format='JPEG')
-            request.release()
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.getvalue() + b'\r\n')
+    # Placeholder: replace with real camera stream logic using libcamera or Picamera2
+    while True:
+        time.sleep(1)
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
 
 @app.route('/')
 def index():
