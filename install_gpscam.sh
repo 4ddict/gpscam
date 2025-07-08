@@ -26,11 +26,11 @@ if [[ "$1" == "--reinstall" ]]; then
   exec "$0"
 fi
 
-echo "🛰️  GPSCam (Super-Lean Mode)"
+echo "🚙️  GPSCam (Super-Lean Mode)"
 echo "============================="
 
-read -p "📡  Enable GPS support? (y/n): " INSTALL_GPS
-read -p "📬  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
+read -p "🛍️  Enable GPS support? (y/n): " INSTALL_GPS
+read -p "📨  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
 read -p "🧼  Do you want to update the system (apt upgrade)? (y/n): " UPDATE_SYSTEM
 
 sudo apt update
@@ -41,7 +41,6 @@ if [[ "$UPDATE_SYSTEM" =~ ^[Yy]$ ]]; then
 fi
 
 echo "📦  Installing minimal packages..."
-
 sudo apt install -y \
   python3-pip \
   python3-flask \
@@ -49,8 +48,6 @@ sudo apt install -y \
   python3-numpy \
   python3-libcamera \
   python3-kms++ \
-  libcamera0 \
-  libcamera-dev \
   raspi-config \
   jq
 
@@ -155,7 +152,7 @@ cat << 'EOF' > "$INSTALL_PATH/templates/index.html"
     <h1 class="mb-4">📷 GPSCam Live Stream</h1>
     <img src="{{ url_for('video_feed') }}" class="img-fluid border border-light rounded">
     <div class="mt-3">
-      <p>🗺️ GPS: {{ gps.lat }}, {{ gps.lon }}</p>
+      <p>📜 GPS: {{ gps.lat }}, {{ gps.lon }}</p>
       <p>⏱️ Time: {{ gps.timestamp }}</p>
       <p>🚗 Speed: {{ gps.speed }} km/h</p>
     </div>
