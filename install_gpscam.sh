@@ -4,6 +4,7 @@ INSTALL_PATH="/home/pi/gpscam"
 SERVICE_FILE="/etc/systemd/system/gpscam.service"
 INSTALL_MQTT=""
 INSTALL_GPS=""
+UPDATE_SYSTEM=""
 
 # 🧹 Uninstall GPSCam
 if [[ "$1" == "--uninstall" ]]; then
@@ -30,10 +31,17 @@ echo "===================================="
 
 read -p "📡  Enable GPS support? (y/n): " INSTALL_GPS
 read -p "📬  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
+read -p "🧼  Do you want to update the system (apt upgrade)? takes longer! (y/n): " UPDATE_SYSTEM
 
-echo "📦  Installing minimal required packages..."
-
+echo "📦  Installing required packages..."
 sudo apt update
+
+if [[ "$UPDATE_SYSTEM" =~ ^[Yy]$ ]]; then
+  echo "🔄  Performing full system upgrade..."
+  sudo apt full-upgrade -y
+fi
+
+# Always install the core dependencies
 sudo apt install -y \
   python3-pip \
   python3-flask \
@@ -204,6 +212,4 @@ if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
 else
   echo " 📴  MQTT disabled for this installation."
 fi
-echo " 🧹  Uninstall: ./install_gpscam.sh --uninstall"
-echo " ♻️  Reinstall: ./install_gpscam.sh --reinstall"
-echo "===================================="
+echo " 🧹  Uninstall: ./install_gps_
