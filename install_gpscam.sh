@@ -31,15 +31,21 @@ echo "===================================="
 read -p "📡  Enable GPS support? (y/n): " INSTALL_GPS
 read -p "📬  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
 
-echo "🔄  Updating and installing dependencies..."
+echo "📦  Installing minimal required packages..."
 
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3-pip python3-flask gpsd gpsd-clients \
-                    python3-serial libcamera-apps python3-numpy \
-                    python3-picamera2 raspi-config jq
+sudo apt update
+sudo apt install -y \
+  python3-pip \
+  python3-flask \
+  gpsd gpsd-clients \
+  python3-serial \
+  python3-numpy \
+  libcamera-apps \
+  python3-picamera2 \
+  raspi-config \
+  jq
 
 [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install paho-mqtt
-
 sudo pip3 install flask-bootstrap
 
 echo "📷  Enabling camera and serial interfaces..."
@@ -50,28 +56,27 @@ sudo raspi-config nonint do_serial 1  # Enable serial hardware
 
 echo "📁  Creating project directory..."
 
-mkdir -p $INSTALL_PATH/templates
-mkdir -p $INSTALL_PATH/static
+mkdir -p "$INSTALL_PATH/templates"
+mkdir -p "$INSTALL_PATH/static"
 
 echo "⚙️  Writing application files..."
 
 # --- gpscam.py ---
-cat << 'EOF' > $INSTALL_PATH/gpscam.py
+cat << 'EOF' > "$INSTALL_PATH/gpscam.py"
 import os
-from flask import Flask, render_template, Response, request, redirect
+from flask import Flask, render_template, Response
 from picamera2 import Picamera2
-from picamera2.encoders import MJPEGEncoder
-from picamera2.outputs import FileOutput
 from threading import Thread
-import time, datetime
 import serial
 import pynmea2
-import json
 
 app = Flask(__name__)
 
 picam2 = Picamera2()
-camera_config = picam2.create_video_configuration(main={"size": (1920, 1080)}, controls={"FrameRate": 15})
+camera_config = picam2.create_video_configuration(
+    main={"size": (1920, 1080)},
+    controls={"FrameRate": 15}
+)
 picam2.configure(camera_config)
 picam2.start()
 
@@ -86,9 +91,9 @@ def read_gps():
     try:
         ser = serial.Serial("/dev/serial0", 9600, timeout=1)
         while True:
-            data = ser.readline().decode('utf-8', errors='ignore')
-            if data.startswith('$GPRMC'):
-                msg = pynmea2.parse(data)
+            line = ser.readline().decode("utf-8", errors="ignore")
+            if line.startswith('$GPRMC'):
+                msg = pynmea2.parse(line)
                 gps_data["lat"] = msg.latitude
                 gps_data["lon"] = msg.longitude
                 gps_data["speed"] = round(float(msg.spd_over_grnd) * 1.852, 2)
@@ -111,16 +116,16 @@ def index():
 def video_feed():
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/settings', methods=['GET', 'POST'])
+@app.route('/settings')
 def settings():
     return render_template('settings.html')
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
 # --- index.html ---
-cat << 'EOF' > $INSTALL_PATH/templates/index.html
+cat << 'EOF' > "$INSTALL_PATH/templates/index.html"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -144,7 +149,7 @@ cat << 'EOF' > $INSTALL_PATH/templates/index.html
 EOF
 
 # --- settings.html ---
-cat << 'EOF' > $INSTALL_PATH/templates/settings.html
+cat << 'EOF' > "$INSTALL_PATH/templates/settings.html"
 <!DOCTYPE html>
 <html>
 <head>
@@ -165,7 +170,7 @@ EOF
 # --- systemd service ---
 echo "🧠  Creating systemd service..."
 
-sudo tee $SERVICE_FILE > /dev/null <<EOF
+sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=GPSCam Video Stream with GPS Overlay
 After=network.target
