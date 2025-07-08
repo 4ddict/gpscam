@@ -1,4 +1,4 @@
-# 📸 GPSCam 0.1 by addict
+# 📸 GPSCam 0.2 by addict
 
 **GPS-enabled camera system for Raspberry Pi**  
 Overlay GPS coordinates, speed, and timestamp on a live camera stream — and publish GPS data to Home Assistant via MQTT (optional).
