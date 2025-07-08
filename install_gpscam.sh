@@ -1,366 +1,195 @@
 #!/bin/bash
-set -e
 
-# === CONFIG ===
-SERVICE_NAME=gpscam
-if [ -z "$USERNAME" ]; then
-  read -p "Enter your Linux username (e.g., pi): " USERNAME
-fi
-read -p "Do you want to install local MQTT support? (y/n): " INSTALL_MQTT
-PROJECT_DIR="/home/$USERNAME/gpscam"
-VENV_DIR="$PROJECT_DIR/venv"
-# ===
+INSTALL_PATH="/home/pi/gpscam"
+SERVICE_FILE="/etc/systemd/system/gpscam.service"
+INSTALL_MQTT=""
+INSTALL_GPS=""
 
-# === Uninstall ===
+# 🧹 Uninstall GPSCam
 if [[ "$1" == "--uninstall" ]]; then
-  echo "[🔻] Uninstalling GPSCam..."
-  sudo systemctl stop $SERVICE_NAME.service || true
-  sudo systemctl disable $SERVICE_NAME.service || true
-  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
+  echo "🧹  Uninstalling GPSCam..."
+  sudo systemctl stop gpscam.service
+  sudo systemctl disable gpscam.service
+  sudo rm -f "$SERVICE_FILE"
   sudo systemctl daemon-reload
   sudo systemctl reset-failed
-  rm -rf "$PROJECT_DIR"
-  echo "[✅] GPSCam removed."
+  rm -rf "$INSTALL_PATH"
+  echo "✅  GPSCam Uninstalled."
   exit 0
 fi
 
-# === Reinstall (wipe + fresh install) ===
+# ♻️ Reinstall GPSCam
 if [[ "$1" == "--reinstall" ]]; then
-  echo "[♻️] Reinstalling GPSCam..."
-  sudo systemctl stop $SERVICE_NAME.service || true
-  sudo systemctl disable $SERVICE_NAME.service || true
-  sudo rm -f /etc/systemd/system/$SERVICE_NAME.service
-  sudo systemctl daemon-reload
-  sudo systemctl reset-failed
-  rm -rf "$PROJECT_DIR"
-  echo "[✅] Cleaned old installation."
-  sleep 2
+  echo "♻️  Reinstalling GPSCam..."
+  "$0" --uninstall
+  exec "$0"
 fi
 
-# === OS-level packages ===
-echo "[+] Installing APT dependencies..."
-sudo apt update && sudo apt install --no-install-recommends -y \
-  python3 python3-venv python3-pip \
-  python3-libcamera python3-picamera2 libcamera-apps \
-  gpsd gpsd-clients
+echo "🛰️  GPSCam Installer for Pi Zero 2 W"
+echo "===================================="
 
-if [[ "$INSTALL_MQTT" =~ ^[Yy]$ ]]; then
-  sudo apt install --no-install-recommends -y mosquitto mosquitto-clients
-fi
+read -p "📡  Enable GPS support? (y/n): " INSTALL_GPS
+read -p "📬  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
 
-# === Enable UART (for most HAT GPS modules) ===
-echo "[+] Configuring UART for GPS module..."
-sudo sed -i 's/console=serial0,115200 //g' /boot/cmdline.txt
-sudo sed -i '/^enable_uart=/d' /boot/config.txt
-echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
+echo "🔄  Updating and installing dependencies..."
 
-# === gpsd setup ===
-echo "[+] Configuring gpsd..."
-sudo bash -c 'cat > /etc/default/gpsd <<EOF
-START_DAEMON="true"
-GPSD_OPTIONS="-n"
-DEVICES="/dev/serial0"
-USBAUTO="false"
-GPSD_SOCKET="/var/run/gpsd.sock"
-EOF'
-sudo systemctl stop gpsd.socket gpsd || true
-sudo systemctl enable gpsd.socket
-sudo systemctl start gpsd.socket
-sudo systemctl start gpsd
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3-pip python3-flask gpsd gpsd-clients \
+                    python3-serial libcamera-apps python3-numpy \
+                    python3-picamera2 raspi-config jq
 
-# === Project skeleton ===
-echo "[+] Setting up project directory..."
-mkdir -p "$PROJECT_DIR"/{static,templates}
-cd "$PROJECT_DIR"
+[[ "$INSTALL_MQTT" =~ ^[Yy]$ ]] && sudo pip3 install paho-mqtt
 
-python3 -m venv --system-site-packages venv
-source "$VENV_DIR/bin/activate"
-pip install --upgrade pip
-pip install \
-  flask==3.0.3 \
-  picamera2==0.3.16 \
-  gpsd-py3==0.3.0 \
-  pynmea2==1.18.0 \
-  paho-mqtt==1.6.1 \
-  opencv-python-headless==4.9.0.80
+sudo pip3 install flask-bootstrap
 
-# === Runtime settings ===
-cat > settings.json << 'EOF'
-{
-  "resolution": "1920x1080",
-  "fps": "15",
-  "timezone": "UTC",
-  "overlay_text_size": "1"
-}
-EOF
+echo "📷  Enabling camera and serial interfaces..."
 
-# === store the MQTT preference for gps.py ===
-cat > config.json << EOF
-{
-  "use_mqtt": "${INSTALL_MQTT,,}"
-}
-EOF
-# ----------------------------------------------------------------------
+sudo raspi-config nonint do_camera 0
+sudo raspi-config nonint do_serial 2  # Disable login shell
+sudo raspi-config nonint do_serial 1  # Enable serial hardware
 
-# === app.py ===
-cat > app.py << 'EOF'
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+echo "📁  Creating project directory..."
+
+mkdir -p $INSTALL_PATH/templates
+mkdir -p $INSTALL_PATH/static
+
+echo "⚙️  Writing application files..."
+
+# --- gpscam.py ---
+cat << 'EOF' > $INSTALL_PATH/gpscam.py
+import os
 from flask import Flask, render_template, Response, request, redirect
-from camera import Camera
-from gps import GPSReader
+from picamera2 import Picamera2
+from picamera2.encoders import MJPEGEncoder
+from picamera2.outputs import FileOutput
+from threading import Thread
+import time, datetime
+import serial
+import pynmea2
 import json
 
 app = Flask(__name__)
-camera = Camera()
-gps = GPSReader()
+
+picam2 = Picamera2()
+camera_config = picam2.create_video_configuration(main={"size": (1920, 1080)}, controls={"FrameRate": 15})
+picam2.configure(camera_config)
+picam2.start()
+
+gps_data = {
+    "lat": None,
+    "lon": None,
+    "speed": 0,
+    "timestamp": None
+}
+
+def read_gps():
+    try:
+        ser = serial.Serial("/dev/serial0", 9600, timeout=1)
+        while True:
+            data = ser.readline().decode('utf-8', errors='ignore')
+            if data.startswith('$GPRMC'):
+                msg = pynmea2.parse(data)
+                gps_data["lat"] = msg.latitude
+                gps_data["lon"] = msg.longitude
+                gps_data["speed"] = round(float(msg.spd_over_grnd) * 1.852, 2)
+                gps_data["timestamp"] = msg.datetime.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        print("GPS Error:", e)
+
+Thread(target=read_gps, daemon=True).start()
+
+def gen_frames():
+    while True:
+        frame = picam2.capture_array()
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame.tobytes() + b'\r\n')
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', gps=gps_data)
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(camera.stream_frames(gps), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
-    if request.method == 'POST':
-        with open("settings.json", "w") as f:
-            json.dump(request.form.to_dict(), f)
-        camera.reload_settings()
-        return redirect("/settings")
-    else:
-        with open("settings.json") as f:
-            settings = json.load(f)
-        return render_template("settings.html", settings=settings)
+    return render_template('settings.html')
 
-if __name__ == '__main__':
-    gps.start()
-    camera.start()
+if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080, threaded=True)
 EOF
 
-# === camera.py ===
-cat > camera.py << 'EOF'
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-from picamera2 import Picamera2
-import json, cv2
-from datetime import datetime
-
-class Camera:
-    def __init__(self):
-        self.picam = Picamera2()
-        self.reload_settings()
-
-    def reload_settings(self):
-        with open("settings.json") as f:
-            settings = json.load(f)
-        res = tuple(map(int, settings["resolution"].split("x")))
-        fps = int(settings["fps"])
-        self.picam.stop()
-        self.config = self.picam.create_video_configuration(
-            main={"size": res, "format": "RGB888"},
-            controls={"FrameRate": fps}
-        )
-        self.picam.configure(self.config)
-        self.picam.start()
-
-    def start(self):
-        pass  # kept for symmetry
-
-    def stream_frames(self, gps):
-        while True:
-            frame = self.picam.capture_array()
-            overlay = (
-                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
-                f"{gps.last_coords} | {gps.speed_kmh:.1f} km/h"
-            )
-            cv2.putText(
-                frame, overlay, (10, frame.shape[0]-10),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2
-            )
-            _, jpeg = cv2.imencode('.jpg', frame)
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
-                   + jpeg.tobytes() + b'\r\n')
-EOF
-
-# === gps.py ===
-cat > gps.py << 'EOF'
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-gps.py  – reads GPS via gpsd and *optionally* publishes to MQTT.
-
-If config.json contains `"use_mqtt": "y"` or `"use_mqtt": "Y"`,
-MQTT is enabled; otherwise all MQTT code is skipped gracefully.
-"""
-import json, os, threading, time
-import gpsd                # pip install gpsd-py3
-
-# ----------------------------------------------------------------------
-# Read user preference --------------------------------------------------
-USE_MQTT = False
-try:
-    with open("config.json") as f:
-        cfg = json.load(f)
-        USE_MQTT = cfg.get("use_mqtt", "n").lower() == "y"
-except Exception:
-    # Missing/invalid config → fall back to False
-    pass
-
-if USE_MQTT:
-    import paho.mqtt.client as mqtt
-# ----------------------------------------------------------------------
-
-class GPSReader(threading.Thread):
-    def __init__(self):
-        super().__init__(daemon=True)
-        gpsd.connect()
-        self.last_coords = "N/A"
-        self.speed_kmh   = 0.0
-
-        # === MQTT init only if requested ===
-        self.client = None
-        if USE_MQTT:
-            try:
-                self.client = mqtt.Client()
-                self.client.connect("localhost", 1883, 60)
-                self.client.loop_start()
-                self._publish_discovery()
-            except Exception as e:
-                # Connection failed → disable MQTT for this run
-                print("[GPSCam] MQTT disabled:", e)
-                self.client = None
-
-    # === Home-Assistant discovery ===
-    def _publish_discovery(self):
-        if not self.client:
-            return
-        self.client.publish(
-            "homeassistant/sensor/gpscam_speed/config",
-            json.dumps({
-                "name": "GPSCam Speed",
-                "state_topic": "gpscam/speed",
-                "unit_of_measurement": "km/h",
-                "unique_id": "gpscam_speed",
-                "device": {"identifiers": ["gpscam"], "name": "GPSCam"},
-            }),
-            retain=True
-        )
-        self.client.publish(
-            "homeassistant/sensor/gpscam_coords/config",
-            json.dumps({
-                "name": "GPSCam Coords",
-                "state_topic": "gpscam/coords",
-                "unique_id": "gpscam_coords",
-                "device": {"identifiers": ["gpscam"], "name": "GPSCam"},
-            }),
-            retain=True
-        )
-
-    # === Main thread loop ===
-    def run(self):
-        while True:
-            try:
-                packet = gpsd.get_current()
-                if packet.mode >= 2:                  # 2-D fix or better
-                    self.last_coords = (
-                        f"{packet.lat:.5f}, {packet.lon:.5f}"
-                    )
-                    self.speed_kmh = packet.hspeed() * 3.6
-
-                    if self.client:  # publish only when MQTT enabled
-                        self.client.publish(
-                            "gpscam/coords",
-                            f"{packet.lat},{packet.lon}",
-                            retain=True
-                        )
-                        self.client.publish(
-                            "gpscam/speed",
-                            f"{self.speed_kmh:.2f}",
-                            retain=True
-                        )
-            except Exception:
-                pass
-            time.sleep(1)
-EOF
-
-# === HTML templates ===
-cat > templates/index.html << 'EOF'
+# --- index.html ---
+cat << 'EOF' > $INSTALL_PATH/templates/index.html
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>GPSCam Live</title>
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="bg-dark text-light">
-  <div class="container text-center mt-4">
-    <h1>GPSCam Live Feed</h1>
-    <img src="/video_feed"
-         class="img-fluid mt-3 border border-light rounded shadow">
-    <div class="mt-4">
-      <a href="/settings" class="btn btn-outline-light">Settings</a>
+<body class="bg-dark text-white">
+  <div class="container text-center mt-3">
+    <h1 class="mb-4">📷 GPSCam Live Stream</h1>
+    <img src="{{ url_for('video_feed') }}" class="img-fluid border border-light rounded">
+    <div class="mt-3">
+      <p>🗺️ GPS: {{ gps.lat }}, {{ gps.lon }}</p>
+      <p>⏱️ Time: {{ gps.timestamp }}</p>
+      <p>🚗 Speed: {{ gps.speed }} km/h</p>
     </div>
+    <a href="/settings" class="btn btn-primary">⚙️ Settings</a>
   </div>
 </body>
 </html>
 EOF
 
-cat > templates/settings.html << 'EOF'
+# --- settings.html ---
+cat << 'EOF' > $INSTALL_PATH/templates/settings.html
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Settings</title>
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <meta charset="utf-8">
+  <title>GPSCam Settings</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-light">
   <div class="container mt-4">
-    <h2>GPSCam Settings</h2>
-    <form method="post">
-      {% for key, value in settings.items() %}
-      <div class="mb-3">
-        <label class="form-label">{{ key }}</label>
-        <input name="{{ key }}" value="{{ value }}" class="form-control">
-      </div>
-      {% endfor %}
-      <button type="submit" class="btn btn-primary">Save</button>
-      <a href="/" class="btn btn-secondary">Back</a>
-    </form>
+    <h2>⚙️ Settings (Coming Soon)</h2>
+    <p>This page will allow you to adjust resolution, framerate, time zone, etc.</p>
+    <a href="/" class="btn btn-secondary">🔙 Back to Stream</a>
   </div>
 </body>
 </html>
 EOF
 
-# === systemd service file ===
-cat > $SERVICE_NAME.service << EOF
+# --- systemd service ---
+echo "🧠  Creating systemd service..."
+
+sudo tee $SERVICE_FILE > /dev/null <<EOF
 [Unit]
-Description=GPSCam Web UI
+Description=GPSCam Video Stream with GPS Overlay
 After=network.target
 
 [Service]
-ExecStart=$VENV_DIR/bin/python $PROJECT_DIR/app.py
-WorkingDirectory=$PROJECT_DIR
+ExecStart=/usr/bin/python3 $INSTALL_PATH/gpscam.py
+WorkingDirectory=$INSTALL_PATH
+StandardOutput=inherit
+StandardError=inherit
 Restart=always
-User=$USERNAME
-Environment="PYTHONUNBUFFERED=1"
-ExecStartPre=/bin/sleep 5
+User=pi
 
 [Install]
 WantedBy=multi-user.target
 EOF
-sudo cp $SERVICE_NAME.service /etc/systemd/system/
+
+echo "🚀  Enabling and starting service..."
 
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
-sudo systemctl enable $SERVICE_NAME
-sudo systemctl restart $SERVICE_NAME
+sudo systemctl enable gpscam.service
+sudo systemctl start gpscam.service
 
+echo ""
 echo "===================================="
 echo " ✅  GPSCam Installed and Running!"
 echo " 🔄  Reboot recommended to finalise UART/GPS changes."
