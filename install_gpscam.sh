@@ -26,14 +26,14 @@ if [[ "$1" == "--reinstall" ]]; then
   exec "$0"
 fi
 
-echo "🛰️  GPSCam Installer for Pi Zero 2 W"
+echo "🛰️  GPSCam Installer (Ultra-Lean)"
 echo "===================================="
 
 read -p "📡  Enable GPS support? (y/n): " INSTALL_GPS
 read -p "📬  Enable MQTT for Home Assistant? (y/n): " INSTALL_MQTT
 read -p "🧼  Do you want to update the system (apt upgrade)? (y/n): " UPDATE_SYSTEM
 
-echo "📦  Installing required packages..."
+echo "📦  Installing only what is absolutely needed..."
 sudo apt update
 
 if [[ "$UPDATE_SYSTEM" =~ ^[Yy]$ ]]; then
@@ -41,19 +41,19 @@ if [[ "$UPDATE_SYSTEM" =~ ^[Yy]$ ]]; then
   sudo apt full-upgrade -y
 fi
 
-# Core dependencies
+# Minimal packages only
 sudo apt install -y \
   python3-pip \
   python3-flask \
-  gpsd gpsd-clients \
   python3-serial \
   python3-numpy \
-  libcamera-apps \
+  python3-libcamera \
+  python3-kms++ \
   python3-picamera2 \
   raspi-config \
   jq
 
-# Python packages
+# Required Python modules
 sudo pip3 install \
   flask-bootstrap \
   pynmea2 \
@@ -64,7 +64,7 @@ sudo pip3 install \
 
 echo "📷  Enabling camera and serial interfaces..."
 sudo raspi-config nonint do_camera 0
-sudo raspi-config nonint do_serial 1
+sudo raspi-config nonint do_serial 1  # This disables shell and enables serial port
 
 echo "📁  Creating project directory..."
 mkdir -p "$INSTALL_PATH/templates"
